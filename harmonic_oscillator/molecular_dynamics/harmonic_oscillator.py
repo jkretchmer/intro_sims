@@ -41,9 +41,6 @@ class harm_osc():
         self.vvv = vi
         self.init()
 
-        #initialize correlation function array
-        self.corrfcn = np.zeros( [ round(Nstep/Nprint)+1, 2 ] )
-
         #Define output files
         self.file_output = open( 'output.dat', 'w' )
 
@@ -51,7 +48,7 @@ class harm_osc():
 
     def kernel( self ):
 
-        print('******* RUNNING RPMD CALCULATION ********')
+        print('******* RUNNING MD CALCULATION ********')
         print('Running MD for 1D Harmonic Oscillator for ',self.Nstep,'steps')
         print('*****************************************')
         print()
