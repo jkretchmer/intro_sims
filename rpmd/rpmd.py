@@ -10,7 +10,7 @@ class rpmd():
 
     #class to integrate rpmd equations of motion
 
-    def __init__( self, beta, m, nbeads, delt, systype, Nstep, Nprint, Ntraj, Nequil, Ntemp ):
+    def __init__( self, beta, m, nbeads, delt, systype, Nstep, Nprint, Ntraj, Nequil, Ntemp, integ='vv' ):
 
 
         #delt   - time-step
@@ -23,6 +23,7 @@ class rpmd():
         #m      - physical mass of particle
         #nbeads - number of rpmd beads
         #systype - string defining the type of system ie the potential
+        #integ   - string defining how the system is integrated
 
         #note that hbar = 1
 
@@ -38,7 +39,11 @@ class rpmd():
         self.Ntraj   = Ntraj
         self.Nequil  = Nequil
         self.Ntemp   = Ntemp
-    
+        self.integ   = integ
+
+        #Check inputs are defined correctly
+        self.check_input()
+ 
         #initialize system - position array xxx, velocity array vvv, and force array fff
         self.init()
 
@@ -79,8 +84,8 @@ class rpmd():
                     print( 'Writing data at step ', step, 'and time', currtime, 'for trajectory ',itraj )
                     self.calc_data( itraj, step, currtime, initxcom )
 
-                #integrate using velocity verlet
-                self.velocity_verlet()
+                #integrate eom
+                self.integrate()
 
             #Calculate and print data of interest at last time-step for each trajectory
             step += 1
@@ -99,8 +104,8 @@ class rpmd():
         #equilibrate system in NVT ensemble
         for step in range(self.Nequil):
 
-            #integrate using velocity verlet
-            self.velocity_verlet()
+            #integrate eom
+            self.integrate()
 
             #re-sample velocities every Ntemp steps (note that this resamples velocities again at t=0)
             if( np.mod( step, self.Ntemp ) == 0 ):
@@ -108,47 +113,102 @@ class rpmd():
 
 ###############################################################
 
-    def velocity_verlet( self ):
+    def integrate( self ):
 
-        #velocity-verlet algorithm
-        #note switched from conventional algorithm by integrating velocities first and then positions
+        #subroutine to integrate equations of motion
+        #note switched from conventional velocity-verlet algorithm by integrating velocities first and then positions
+        #this is more efficient and also interfaces with analytical and cayley integrations of internal modes
 
         self.get_velocities()   
-        self.get_positions()
+
+        if( self.integ == 'vv' ):
+            self.get_vv_positions()
+        elif( self.integ == 'analyt' ):
+            self.get_analyt_positions()
+        elif( self.integ == 'cayley' ):
+            self.get_cayley_positions()
+
         self.get_forces()
         self.get_velocities()
 
 ###############################################################
 
-    def get_positions( self ): 
+    def get_vv_positions( self ): 
 
-        #integrate positions by a full time-step
+        #integrate positions by a full time-step using velocity-verlet
         self.xxx += self.vvv * self.delt
+
+###############################################################
+
+    def get_analyt_positions( self ):
+
+        #integrate positions using analytical result for internal modes of ring-polymer
+
+        #Transform position and velocities to normal-modes using fourier-transform
+        #Note this is faster than directly diagonalizing the frequency matrix
+        xnm = self.real_to_normal_mode( self.xxx )
+        vnm = self.real_to_normal_mode( self.vvv )
+
+        #evolve position of the zero-freq mode using velocity-verlet
+        #this is the force on the centroid and accounts for the external force on the position
+        #external force on velocity accounted for in velocity call of velocity-verlet algorithm
+        xnm[0] += vnm[0]*self.delt
+
+        #evolve position/velocity of all other modes using analytical result for harmonic oscillators
+
+        c1 = np.copy( vnm[1:] / self.nm_freq[1:] )
+        c2 = np.copy( xnm[1:] )
+        freq_dt = self.nm_freq[1:] * self.delt
+
+        xnm[1:] = c1 * np.sin( freq_dt ) + c2 * np.cos( freq_dt )
+
+        vnm[1:] = self.nm_freq[1:] * ( c1 * np.cos( freq_dt ) - c2 * np.sin( freq_dt ) )
+
+        #Inverse transform back to real space
+        self.xxx = self.normal_mode_to_real( xnm )
+        self.vvv = self.normal_mode_to_real( vnm )
+
+###############################################################
+
+    def get_cayley_positions( self ):
+
+        #integrate positions using analytical result for internal modes of ring-polymer
+
+        #Transform position and velocities to normal-modes using fourier-transform
+        #Note this is faster than directly diagonalizing the frequency matrix
+        xnm = self.real_to_normal_mode( self.xxx )
+        vnm = self.real_to_normal_mode( self.vvv )
+
+        #evolve position/velocity of all modes using cayley transform
+        xnm_copy = np.copy( xnm )
+        vnm_copy = np.copy( vnm )
+
+        xnm = ( self.nm_freq_dif * xnm_copy + self.delt * vnm_copy ) / self.nm_freq_sum
+
+        vnm = ( -self.nm_freq_prod * xnm_copy + self.nm_freq_dif * vnm_copy ) / self.nm_freq_sum
+
+        #Inverse transform back to real space
+        self.xxx = self.normal_mode_to_real( xnm )
+        self.vvv = self.normal_mode_to_real( vnm )
 
 ###############################################################
 
     def get_velocities( self ): 
 
         #integrate velocities by half a time-step
+        #this update always includes the external force,
+        #but only internal ring-polymer force if doing velocity-verlet integrator
         self.vvv += 0.5 * self.fff * self.delt / self.m
 
 ###############################################################
 
     def get_forces( self ): 
 
-        nbeads = self.nbeads
+        self.fff = np.zeros(self.nbeads)
     
-        #calculate forces due to internal modes
-        self.fff = np.zeros(nbeads)
-        for i in range(nbeads):
-            if( i == 0 ):
-                #periodic boundary conditions for the first bead
-                self.fff[i] = -self.m * self.omega_n**2 * ( 2.0*self.xxx[i] - self.xxx[nbeads-1] - self.xxx[i+1] )
-            elif( i == nbeads-1 ):
-                #periodic boundary conditions for the last bead
-                self.fff[i] = -self.m * self.omega_n**2 * ( 2.0*self.xxx[i] - self.xxx[i-1] - self.xxx[0] )
-            else:
-                self.fff[i] = -self.m * self.omega_n**2 * ( 2.0*self.xxx[i] - self.xxx[i-1] - self.xxx[i+1] )
+        #calculate forces due to internal modes of ring polymer only if using velocity-verlet for everything
+        if( self.integ == 'vv' ):
+            self.rp_force()
     
         #forces due to external potential
         if( self.systype == 'harmonic' ):
@@ -163,12 +223,25 @@ class rpmd():
         elif( self.systype == 'quartic' ):
     
             self.fff += -self.xxx**3
-    
-        else:
-            print( 'ERROR: Incorrect option specified for systpe' )
-            print( 'Possible options are: harmonic, anharmonic, or quartic' ) 
-            exit()
 
+###############################################################
+
+    def rp_force( self ):
+
+        #calculate forces due to internal modes of ring polymer
+
+        nbeads = self.nbeads
+
+        for i in range(nbeads):
+            if( i == 0 ):
+                #periodic boundary conditions for the first bead
+                self.fff[i] = -self.m * self.omega_n**2 * ( 2.0*self.xxx[i] - self.xxx[nbeads-1] - self.xxx[i+1] )
+            elif( i == nbeads-1 ):
+                #periodic boundary conditions for the last bead
+                self.fff[i] = -self.m * self.omega_n**2 * ( 2.0*self.xxx[i] - self.xxx[i-1] - self.xxx[0] )
+            else:
+                self.fff[i] = -self.m * self.omega_n**2 * ( 2.0*self.xxx[i] - self.xxx[i-1] - self.xxx[i+1] )
+    
 ###############################################################
 
     def init( self ):
@@ -181,6 +254,67 @@ class rpmd():
 
         #calculate initial forces
         self.get_forces()   
+
+        #initialize normal mode frequencies of ring polymer if doing analytical or cayley integration
+        if( self.integ == 'analyt' or self.integ == 'cayley' ):
+            self.normal_mode_freq()
+
+###############################################################
+
+    def normal_mode_freq( self ):
+
+        #calculate frequencies of normal modes of ring-polymer
+        self.nm_freq = 2.0 / self.beta_n * np.sin( np.arange(self.nbeads) * np.pi / self.nbeads )
+
+        #if using cayley integrator make additional frequency arrays
+        if( self.integ == 'cayley' ):
+            self.nm_freq_prod = self.delt * self.nm_freq**2
+            self.nm_freq_sum  = 1 + 0.25 * self.delt * self.nm_freq_prod
+            self.nm_freq_dif  = 1 - 0.25 * self.delt * self.nm_freq_prod
+
+###############################################################
+
+    def real_to_normal_mode( self, real_space ):
+
+        #Takes input array and calculates normal-modes using fourier-transform
+        #Assumes input array is real and transforms complex output from FT to
+        #real-valued normal modes by taking sums of real and imaginary components of degenerate frequency modes
+
+        #discrete fourier transform, which gives complex results
+        nm_cmplx = np.fft.rfft( real_space, norm='ortho' )
+
+        #intialize terms for real valued normal mode array
+        sz    = real_space.shape[0]
+        midpt = round( sz/2 )
+        nm    = np.zeros(sz)
+
+        #define real valued normal modes
+        nm[0]        = np.real( nm_cmplx[0] )
+        nm[midpt]    = np.real( nm_cmplx[midpt] )
+        nm[1:midpt]  = np.real( np.sqrt(0.5) * ( nm_cmplx[1:midpt] + np.conjugate(nm_cmplx[1:midpt]) ) )
+        nm[midpt+1:] = np.flip( np.imag( np.sqrt(0.5) * ( nm_cmplx[1:midpt] - np.conjugate(nm_cmplx[1:midpt]) ) ) )
+
+        return nm
+
+###############################################################
+
+    def normal_mode_to_real( self, nm ):
+
+        #Takes input array of real-valued normal modes and calculates inverse FT
+        #to obtain array in real-space
+
+        #initialize terms for complex valued normal mode array
+        sz       = nm.shape[0]
+        midpt    = round( sz/2 )
+        nm_cmplx = np.zeros( midpt+1, dtype=complex )
+
+        #convert real valued to complex valued normal modes
+        nm_cmplx[0]       = nm[0]
+        nm_cmplx[midpt]   = nm[midpt]
+        nm_cmplx[1:midpt] = np.sqrt(0.5) * ( nm[1:midpt] + 1j * np.flip(nm[midpt+1:]) )
+
+        #inverse fourier transform back to real space
+        return np.fft.irfft( nm_cmplx, norm='ortho' )
 
 ###############################################################
 
@@ -280,5 +414,20 @@ class rpmd():
 
 ###############################################################
 
+    def check_input( self ):
 
+        #Subroutine to check that inputs are defined correctly
+
+        if( self.systype != 'harmonic' and self.systype != 'anharmonic' and self.systype != 'quartic' ):
+            print( 'ERROR: Incorrect option specified for systpe' )
+            print( 'Possible options are: harmonic, anharmonic, or quartic' ) 
+            exit()
+
+        if( self.integ != 'vv' and self.integ != 'analyt' and self.integ != 'cayley' ):
+            print( 'ERROR: Incorrect option specified for integ' )
+            print( 'Possible options are: vv, analyt, cayley' )
+            exit()
+
+
+###############################################################
 

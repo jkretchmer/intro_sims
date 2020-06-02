@@ -1,3 +1,6 @@
+import sys
+import os
+sys.path.append('/Users/joshkretchmer/Documents/Kretchmer_Group/intro_sims/rpmd')
 import rpmd
 
 beta   = 1.0
@@ -13,7 +16,8 @@ Nequil = 10000
 Ntemp  = 100
 
 systype = 'quartic'
+integ   = 'cayley'
 
-rpmd_calc = rpmd.rpmd( beta, m, nbeads, delt, systype, Nstep, Nprint, Ntraj, Nequil, Ntemp )
+rpmd_calc = rpmd.rpmd( beta, m, nbeads, delt, systype, Nstep, Nprint, Ntraj, Nequil, Ntemp, integ )
 
 rpmd_calc.kernel()

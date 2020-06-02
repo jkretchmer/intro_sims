@@ -51,6 +51,7 @@ class ljmd():
         #Define output files
         self.file_output = open( 'output.dat', 'w' )
 
+
 ###############################################################
 
     def kernel( self ):
@@ -87,6 +88,9 @@ class ljmd():
 
         #finish calculation of rdf
         self.grcalc.calc_gr( self.N, self.density )
+
+        #Close output file
+        self.file_output.close()
 
 ###############################################################
 
