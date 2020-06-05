@@ -104,12 +104,13 @@ class rpmd():
         #equilibrate system in NVT ensemble
         for step in range(self.Nequil):
 
-            #integrate eom
-            self.integrate()
-
             #re-sample velocities every Ntemp steps (note that this resamples velocities again at t=0)
             if( np.mod( step, self.Ntemp ) == 0 ):
                 self.sample_vel( self.beta_n )
+
+            #integrate eom
+            self.integrate()
+
 
 ###############################################################
 

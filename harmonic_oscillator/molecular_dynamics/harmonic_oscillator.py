@@ -39,7 +39,10 @@ class harm_osc():
         #initialize system
         self.xxx = xi
         self.vvv = vi
-        self.init()
+        self.initialize()
+
+        if( self.resample ):
+            self.pos_array = np.zeros( round(Nstep/Nprint)+1 )
 
         #Define output files
         self.file_output = open( 'output.dat', 'w' )
@@ -63,6 +66,15 @@ class harm_osc():
                 print( 'Writing data at step ', step, 'and time', currtime )
                 self.calc_data( step, currtime )
 
+                if( self.resample ):
+                    #save positions to single array to histogram at end of code
+                    #if running NVT
+                    self.pos_array[ round(step/self.Nprint) ] = self.xxx
+
+            #Resample velocities (note that this resamples velocities again at t=0)
+            if( self.resample and np.mod( step, self.Ntemp ) == 0 ):
+                self.sample_vel( self.beta )
+
             #integrate using velocity verlet
             self.velocity_verlet()
 
@@ -71,6 +83,13 @@ class harm_osc():
         currtime = step*self.delt
         print( 'Writing data at step ', step, 'and time', currtime )
         self.calc_data( step, currtime )
+
+        #Calculate P(x) if running NVT
+        if( self.resample ):
+            self.calc_prob_x()
+
+        #close output file
+        self.file_output.close()
 
 ###############################################################
 
@@ -106,7 +125,7 @@ class harm_osc():
 
 ###############################################################
 
-    def init( self ):
+    def initialize( self ):
     
         #initial velocity from Maxwell-Boltzmann distribution
         if( self.resample ):
@@ -122,7 +141,7 @@ class harm_osc():
         #generate new velocities from m-b distribution
     
         #standard-deviation
-        #distribution defined as e^(-1/2*x^2/sigma^2)
+        #normal distribution defined in python as e^(-1/2*v^2/sigma^2)
         sigma = np.sqrt( 1.0 / ( beta * self.m ) )
     
         self.vvv = np.random.normal( 0.0, sigma )
@@ -167,5 +186,33 @@ class harm_osc():
 
 ###############################################################
 
+    def calc_prob_x( self ):
 
+        #split data into chunks and calculate P(x) for each chunk
+        Nchnk = 5
+        Nbins = 100
+        histo = np.zeros( [Nbins,Nchnk+1] )
+        split_pos_array = np.split( self.pos_array, Nchnk )
+
+        for i in range(Nchnk):
+
+            if( i == 0 ):
+                #calculate midpoint of each bin
+                bin_edges = np.histogram( split_pos_array[i], bins=Nbins, range=( self.pos_array.min(), self.pos_array.max() ), density=True )[1]
+                for j in range( Nbins ):
+                    histo[j,0] = ( bin_edges[j] + bin_edges[j+1] ) / 2.0
+
+            #calculate normalized histogram for each chunk, note that all histograms have the same range
+            histo[:,i+1]   = np.histogram( split_pos_array[i], bins=Nbins, range=( self.pos_array.min(), self.pos_array.max() ), density=True )[0]
+
+        #calculate average and error over all instances of P(X)
+        avg_histo = np.zeros( [Nbins,3] )
+        avg_histo[:,0] = np.copy( histo[:,0] )
+        avg_histo[:,1] = np.mean( histo[:,1:], axis=1 )
+        avg_histo[:,2] = np.std( histo[:,1:], axis=1 ) / np.sqrt(Nchnk-1)
+
+        #print out P(x)
+        utils.printarray(avg_histo,'prob_x.dat')
+
+###############################################################
 
