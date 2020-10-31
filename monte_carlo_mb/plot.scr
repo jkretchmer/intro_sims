@@ -1,0 +1,8 @@
+#!/bin/bash
+
+m    = 1.0
+beta = 1.0
+
+p sqrt(beta/(2.0*m*pi)) * exp(-beta*0.5*x**2/m) w l lw 4 lc rgb "black" ti "exact",\
+'prob_p.dat' u 1:2 w l lw 2 lc rgb "red" ti "MC result",\
+'prob_p.dat' every 5 u 1:2:3 w error lc rgb "red" ti ""
